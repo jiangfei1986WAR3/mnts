@@ -1,0 +1,30 @@
+{
+  "fee_bps": 4.0,
+  "config_count": 32,
+  "best_overall": {
+    "config_label": "slowreg_raw_entry2_exit2_hold16",
+    "gate_mode": "raw",
+    "net_total_return": -0.455783831168282,
+    "net_sharpe": -1.6814589606078147,
+    "net_max_drawdown": -0.5133537954900309,
+    "turnover_sum": 1818.0
+  },
+  "best_raw": {
+    "config_label": "slowreg_raw_entry2_exit2_hold16",
+    "net_total_return": -0.455783831168282,
+    "net_sharpe": -1.6814589606078147,
+    "net_max_drawdown": -0.5133537954900309
+  },
+  "best_v2_enhanced": {
+    "config_label": "slowreg_cohesion_only_entry1_exit2_hold8",
+    "gate_mode": "cohesion_only",
+    "net_total_return": -0.5531317872249548,
+    "net_sharpe": -5.4359946782253905,
+    "net_max_drawdown": -0.5531317872249548
+  },
+  "improvement_vs_best_raw": {
+    "net_total_return_delta": -0.09734795605667279,
+    "net_sharpe_delta": -3.7545357176175758,
+    "net_max_drawdown_delta": -0.03977799173492391
+  }
+}

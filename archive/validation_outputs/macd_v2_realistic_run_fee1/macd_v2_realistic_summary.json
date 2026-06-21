@@ -1,0 +1,15 @@
+{
+  "fee_bps": 1.0,
+  "best_net_sharpe": {
+    "config": "cross_nonfracture_flip_exit2_hold8",
+    "net_sharpe": 0.1164786249947303
+  },
+  "best_net_total_return": {
+    "config": "cross_nonfracture_flip_exit2_hold8",
+    "net_total_return": 0.03235150780187124
+  },
+  "smallest_net_drawdown": {
+    "config": "cross_nonfracture_flip_exit2_cool8",
+    "net_max_drawdown": -0.19892536328676624
+  }
+}

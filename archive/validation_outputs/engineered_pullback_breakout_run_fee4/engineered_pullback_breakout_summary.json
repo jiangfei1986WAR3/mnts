@@ -1,0 +1,29 @@
+{
+  "fee_bps": 4.0,
+  "best_overall_by_net_sharpe": {
+    "config": "breakout48_cohesion_flip_exit2_hold12_cool8",
+    "branch": "breakout48",
+    "net_sharpe": 3.3764072433154713
+  },
+  "best_overall_by_net_total_return": {
+    "config": "breakout48_cohesion_flip_exit2_hold12_cool8",
+    "branch": "breakout48",
+    "net_total_return": 0.8844831178199204
+  },
+  "branch_best": [
+    {
+      "branch": "breakout48",
+      "best_sharpe_config": "breakout48_cohesion_flip_exit2_hold12_cool8",
+      "best_net_sharpe": 3.3764072433154713,
+      "best_return_config": "breakout48_cohesion_flip_exit2_hold12_cool8",
+      "best_net_total_return": 0.8844831178199204
+    },
+    {
+      "branch": "pullback",
+      "best_sharpe_config": "pullback_short_only_cohesion2_hold8",
+      "best_net_sharpe": 0.4522812247547667,
+      "best_return_config": "pullback_short_only_cohesion2_hold8",
+      "best_net_total_return": 0.022675913385093116
+    }
+  ]
+}

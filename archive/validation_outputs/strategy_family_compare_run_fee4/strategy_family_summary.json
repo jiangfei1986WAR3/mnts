@@ -1,0 +1,22 @@
+{
+  "fee_bps": 4.0,
+  "best_overall_by_net_sharpe": {
+    "strategy": "breakout_48",
+    "family": "breakout",
+    "v2_mode": "raw",
+    "net_sharpe": -0.4788015601576016
+  },
+  "best_overall_by_net_return": {
+    "strategy": "pullback_trend",
+    "family": "trend",
+    "v2_mode": "cohesion_only",
+    "net_total_return": -0.08686250775699433
+  },
+  "most_improved_strategy": {
+    "strategy": "pullback_trend",
+    "family": "trend",
+    "best_mode": "cohesion_only",
+    "net_sharpe_improvement": 1.661188532776095,
+    "net_return_improvement": 0.3528271292967755
+  }
+}

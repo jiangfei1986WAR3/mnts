@@ -1,0 +1,15 @@
+{
+  "fee_bps": 4.0,
+  "best_net_sharpe": {
+    "mode": "raw",
+    "net_sharpe": -4.744956466472839
+  },
+  "best_net_total_return": {
+    "mode": "cohesion_only",
+    "net_total_return": -0.8710789834654091
+  },
+  "smallest_net_drawdown": {
+    "mode": "cohesion_only",
+    "net_max_drawdown": -0.8711882211762636
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "fee_bps": 1.0,
+  "config_count": 64,
+  "best_overall": {
+    "config_label": "adxdi_cohesion_only_adx20_entry2_exit1_hold8",
+    "gate_mode": "cohesion_only",
+    "net_total_return": 0.2845388479566493,
+    "net_sharpe": 1.7355575005637214,
+    "net_max_drawdown": -0.1130661301204332,
+    "turnover_sum": 3209.0
+  },
+  "best_raw": {
+    "config_label": "adxdi_raw_adx20_entry1_exit2_hold16",
+    "net_total_return": 0.13744723043494478,
+    "net_sharpe": 0.3247286993995843,
+    "net_max_drawdown": -0.27641951353809324
+  },
+  "best_v2_enhanced": {
+    "config_label": "adxdi_cohesion_only_adx20_entry2_exit1_hold8",
+    "gate_mode": "cohesion_only",
+    "net_total_return": 0.2845388479566493,
+    "net_sharpe": 1.7355575005637214,
+    "net_max_drawdown": -0.1130661301204332
+  },
+  "improvement_vs_best_raw": {
+    "net_total_return_delta": 0.14709161752170452,
+    "net_sharpe_delta": 1.410828801164137,
+    "net_max_drawdown_delta": 0.16335338341766004
+  }
+}

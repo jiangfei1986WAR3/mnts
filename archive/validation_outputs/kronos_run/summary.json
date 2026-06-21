@@ -1,0 +1,6 @@
+{
+  "num_rows": 34560,
+  "num_unique_tokens": 686,
+  "token_top5_share": 0.14835069444444443,
+  "mean_distribution_shift_l1": 1.4361100604226675
+}

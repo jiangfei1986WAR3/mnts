@@ -1,0 +1,16 @@
+{
+  "fee_bps": 4.0,
+  "train_bars": 11520,
+  "test_bars": 2880,
+  "window_count": 23,
+  "stitched_walkforward_summary": {
+    "bars": 69118,
+    "active_bars": 23378,
+    "net_total_return": 1.453381745897952,
+    "net_sharpe": 1.90615510584341,
+    "net_max_drawdown": -0.19175985853674582
+  },
+  "mean_test_net_sharpe": 1.9533205108545264,
+  "positive_test_windows": 16,
+  "mean_train_net_sharpe": 2.0455438860182746
+}

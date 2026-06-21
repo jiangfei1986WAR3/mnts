@@ -1,0 +1,21 @@
+{
+  "target_horizon": 16,
+  "rolling_window": 96,
+  "high_risk_tokens": [
+    644637,
+    611869,
+    620173,
+    620047,
+    185373,
+    639667,
+    91779,
+    616099
+  ],
+  "shift_q70": 1.6249999999999998,
+  "shift_q90": 1.8333333333333333,
+  "ratio_q70": 0.010416666666666666,
+  "ratio_q90": 0.03125,
+  "latest_warning_level": "orange",
+  "latest_distribution_shift_l1": 1.6875,
+  "latest_high_risk_ratio": 0.0
+}

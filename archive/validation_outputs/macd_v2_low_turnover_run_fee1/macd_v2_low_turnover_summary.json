@@ -1,0 +1,15 @@
+{
+  "fee_bps": 1.0,
+  "best_net_sharpe": {
+    "config": "cohesion_confirm2_hold8",
+    "net_sharpe": 1.4858443740211702
+  },
+  "best_net_total_return": {
+    "config": "cohesion_confirm2_hold8",
+    "net_total_return": 0.3085103644816911
+  },
+  "smallest_net_drawdown": {
+    "config": "cohesion_confirm2_hold8",
+    "net_max_drawdown": -0.14326984708971457
+  }
+}

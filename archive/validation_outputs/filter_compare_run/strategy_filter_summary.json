@@ -1,0 +1,17 @@
+{
+  "best_sharpe": {
+    "strategy": "macd",
+    "filter_mode": "no_fracture",
+    "annualized_sharpe": 2.1915079566573508
+  },
+  "best_total_return": {
+    "strategy": "macd",
+    "filter_mode": "no_fracture",
+    "total_return": 0.9868065055618165
+  },
+  "smallest_drawdown": {
+    "strategy": "ma",
+    "filter_mode": "cohesion_only",
+    "max_drawdown": -0.09258448229446392
+  }
+}

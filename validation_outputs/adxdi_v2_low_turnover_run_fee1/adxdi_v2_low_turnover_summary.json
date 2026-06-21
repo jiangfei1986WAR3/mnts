@@ -1,0 +1,15 @@
+{
+  "fee_bps": 1.0,
+  "best_net_sharpe": {
+    "config": "cohesion2_adx20_confirm2_exit1_hold16",
+    "net_sharpe": 3.5282070909579026
+  },
+  "best_net_total_return": {
+    "config": "defensive_adx20_confirm2_exit2_hold16",
+    "net_total_return": 0.9263291854551405
+  },
+  "smallest_net_drawdown": {
+    "config": "cohesion2_adx20_confirm2_exit1_hold16",
+    "net_max_drawdown": -0.09241745035947613
+  }
+}

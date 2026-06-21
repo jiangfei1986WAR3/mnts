@@ -1,0 +1,13 @@
+{
+  "target_horizon": 16,
+  "min_count": 30,
+  "eligible_return_tokens": 164,
+  "eligible_risk_tokens": 164,
+  "overall_return_mean": -5.97982398719644e-05,
+  "overall_vol_mean": 0.0021765889996612645,
+  "judgement": {
+    "token_distribution_ok": true,
+    "has_return_separation": true,
+    "has_risk_separation": true
+  }
+}

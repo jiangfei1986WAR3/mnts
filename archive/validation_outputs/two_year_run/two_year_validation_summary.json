@@ -1,0 +1,59 @@
+{
+  "discovery_rows": 34560,
+  "validation_rows": 34560,
+  "discovery_start": "2024-07-01 09:00:00+00:00",
+  "discovery_end": "2025-06-26 08:45:00+00:00",
+  "validation_start": "2025-06-26 09:00:00+00:00",
+  "validation_end": "2026-06-21 08:45:00+00:00",
+  "rules": {
+    "risk_tokens": [
+      615059,
+      619163,
+      639667,
+      620175,
+      616067,
+      620173,
+      644637,
+      747215
+    ],
+    "shift_q70": 1.625,
+    "shift_q90": 1.8333333333333333,
+    "ratio_q70": 0.010416666666666666,
+    "ratio_q90": 0.03125,
+    "high_vol_threshold": 0.004014779689373994,
+    "baseline_threshold": 0.004015270703551479,
+    "horizon": 16,
+    "min_count": 30,
+    "rolling_window": 96,
+    "eligible_risk_token_count": 165
+  },
+  "validation_warning_counts": {
+    "orange": 21447,
+    "green": 12103,
+    "red": 1010
+  },
+  "mnts_warning_binary": {
+    "signal_name": "mnts_warning",
+    "flagged_count": 22457,
+    "quiet_count": 12103,
+    "flagged_mean_future_rv": 0.0020567698254742744,
+    "quiet_mean_future_rv": 0.0018401784127624482,
+    "flagged_high_vol_rate": 0.07405263392260765,
+    "quiet_high_vol_rate": 0.04883086837974056,
+    "flagged_crash_rate": 0.05592910896379748,
+    "quiet_crash_rate": 0.05089647194910353
+  },
+  "vol_baseline_binary": {
+    "signal_name": "vol_baseline",
+    "flagged_count": 2254,
+    "quiet_count": 32306,
+    "flagged_mean_future_rv": 0.0037246062875206025,
+    "quiet_mean_future_rv": 0.001859169588457655,
+    "flagged_high_vol_rate": 0.3207630878438332,
+    "quiet_high_vol_rate": 0.0473905776016839,
+    "flagged_crash_rate": 0.160603371783496,
+    "quiet_crash_rate": 0.04674054355228131
+  },
+  "mnts_high_vol_event_coverage": 0.8101153504880213,
+  "vol_baseline_high_vol_event_coverage": 0.3939662821650399
+}

@@ -1,0 +1,38 @@
+{
+  "config": {
+    "breakout_window": 48,
+    "gate_mode": "cohesion",
+    "min_hold_bars": 8,
+    "cooldown_bars": 0
+  },
+  "1.0": {
+    "trade_count": 285,
+    "win_count": 138,
+    "loss_count": 147,
+    "flat_count": 0,
+    "win_rate": 0.4842105263157895,
+    "long_trade_count": 158,
+    "short_trade_count": 127,
+    "long_win_count": 68,
+    "short_win_count": 70,
+    "avg_net_return_per_trade": 0.0040599457353243116,
+    "median_net_return_per_trade": -0.0003610795047358506,
+    "avg_bars_held": 46.424561403508775,
+    "median_bars_held": 37.0
+  },
+  "4.0": {
+    "trade_count": 285,
+    "win_count": 138,
+    "loss_count": 147,
+    "flat_count": 0,
+    "win_rate": 0.4842105263157895,
+    "long_trade_count": 158,
+    "short_trade_count": 127,
+    "long_win_count": 68,
+    "short_win_count": 70,
+    "avg_net_return_per_trade": 0.0036594530446258503,
+    "median_net_return_per_trade": -0.0008128914766990514,
+    "avg_bars_held": 46.424561403508775,
+    "median_bars_held": 37.0
+  }
+}

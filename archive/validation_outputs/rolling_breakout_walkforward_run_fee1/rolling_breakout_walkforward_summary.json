@@ -1,0 +1,20 @@
+{
+  "fee_bps": 1.0,
+  "train_bars": 11520,
+  "test_bars": 2880,
+  "window_count": 12,
+  "stitched_walkforward_summary": {
+    "bars": 34560,
+    "active_bars": 11770,
+    "net_total_return": 1.1301530764810943,
+    "net_sharpe": 3.527996316732761,
+    "net_max_drawdown": -0.0996656349648567
+  },
+  "mean_test_net_sharpe": 3.0459754968476163,
+  "positive_test_windows": 9,
+  "best_fixed_benchmark": {
+    "config": "breakout48_cohesion_flip_exit2_hold12_cool8",
+    "net_sharpe": 3.854295152429337,
+    "net_total_return": 1.0607161648931283
+  }
+}

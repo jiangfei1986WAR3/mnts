@@ -1,0 +1,34 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments and local dependency bundles
+.venv/
+.pydeps/
+
+# Tool caches
+.hf_cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE / editor
+.vscode/
+.idea/
+
+# OS / temp
+Thumbs.db
+.DS_Store
+*.tmp
+*.temp
+
+# Logs
+*.log
+
+# Local runtime artifacts
+validation_outputs/**/runtime_heartbeat.txt
+
+# Embedded git metadata must not be committed into the parent repo
+external/Kronos/.git

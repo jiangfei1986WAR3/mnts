@@ -1,0 +1,60 @@
+{
+  "discovery_rows": 34560,
+  "validation_rows": 34560,
+  "state_window": 64,
+  "horizon": 16,
+  "model": {
+    "high_vol_threshold": 0.004015270703551479,
+    "feature_stats": {
+      "distribution_shift_l1": {
+        "mean": 1.4441660253245434,
+        "std": 0.32067121262157977,
+        "direction": 1.0
+      },
+      "token_entropy": {
+        "mean": 3.120438184725664,
+        "std": 0.517179874660792,
+        "direction": 1.0
+      },
+      "entropy_delta": {
+        "mean": 1.7633168961766872e-05,
+        "std": 0.026644004744317853,
+        "direction": 1.0
+      },
+      "switch_rate": {
+        "mean": 0.8776479758304265,
+        "std": 0.08895867363616321,
+        "direction": 1.0
+      },
+      "embedding_anomaly": {
+        "mean": 3.183351755142212,
+        "std": 1.0,
+        "direction": 1.0
+      },
+      "dominant_token_share": {
+        "mean": 0.14946363089544018,
+        "std": 0.09277402737866955,
+        "direction": -1.0
+      }
+    },
+    "weights": {
+      "distribution_shift_l1": 0.1370054232176483,
+      "token_entropy": 0.1407320373421754,
+      "entropy_delta": 0.15639723020632704,
+      "switch_rate": 0.10203054238722223,
+      "embedding_anomaly": 0.3733440738838117,
+      "dominant_token_share": 0.09049069296281538
+    },
+    "score_q30": -0.27210186488823723,
+    "score_q70": 0.271449295220917
+  },
+  "validation_state_counts": {
+    "drift": 14210,
+    "fracture": 10204,
+    "cohesion": 10146
+  },
+  "state_judgement": {
+    "has_state_separation_on_future_rv": true,
+    "has_state_separation_on_high_vol_event": true
+  }
+}

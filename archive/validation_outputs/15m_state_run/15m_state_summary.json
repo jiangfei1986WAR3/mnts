@@ -1,0 +1,26 @@
+{
+  "discovery_rows": 34560,
+  "validation_rows": 34560,
+  "state_window": 64,
+  "horizon": 16,
+  "rules": {
+    "shift_q50": 1.46875,
+    "shift_q65": 1.59375,
+    "shift_q85": 1.78125,
+    "entropy_q30": 2.930027950397731,
+    "entropy_q50": 3.2301892636504674,
+    "entropy_q70": 3.4546937431699405,
+    "dominance_q50": 0.125,
+    "dominance_q70": 0.171875,
+    "high_vol_threshold": 0.004014779689373994
+  },
+  "validation_state_counts": {
+    "drift": 24477,
+    "cohesion": 5849,
+    "fracture": 4234
+  },
+  "state_judgement": {
+    "has_state_separation_on_future_rv": true,
+    "has_state_separation_on_high_vol_event": false
+  }
+}

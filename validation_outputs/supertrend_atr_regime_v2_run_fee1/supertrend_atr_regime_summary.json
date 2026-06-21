@@ -1,0 +1,32 @@
+{
+  "fee_bps": 1.0,
+  "config_count": 64,
+  "best_overall": {
+    "config_label": "st_raw_p14_m30_entry1_exit2_hold16",
+    "gate_mode": "raw",
+    "net_total_return": 0.4746675485056604,
+    "net_sharpe": 0.8951177170665635,
+    "net_max_drawdown": -0.21793748905039545,
+    "turnover_sum": 1523.0
+  },
+  "best_raw": {
+    "config_label": "st_raw_p14_m30_entry1_exit2_hold16",
+    "net_total_return": 0.4746675485056604,
+    "net_sharpe": 0.8951177170665635,
+    "net_max_drawdown": -0.21793748905039545
+  },
+  "best_v2_enhanced": {
+    "config_label": "st_cohesion_only_p10_m30_entry1_exit2_hold8",
+    "gate_mode": "cohesion_only",
+    "net_total_return": 0.06666423969849933,
+    "net_sharpe": 0.3584968167559898,
+    "net_max_drawdown": -0.10751513693563153
+  },
+  "improvement_vs_best_raw": {
+    "net_total_return_delta": -0.40800330880716107,
+    "net_sharpe_delta": -0.5366209003105737,
+    "net_max_drawdown_delta": 0.11042235211476392
+  },
+  "positive_configs": 16,
+  "total_configs": 64
+}
