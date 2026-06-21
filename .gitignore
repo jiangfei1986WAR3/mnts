@@ -32,3 +32,6 @@ validation_outputs/**/runtime_heartbeat.txt
 
 # Embedded git metadata must not be committed into the parent repo
 external/Kronos/.git
+
+# Downloaded tokenizer assets should be restored by script, not versioned here
+external/kronos_tokenizer_base/
