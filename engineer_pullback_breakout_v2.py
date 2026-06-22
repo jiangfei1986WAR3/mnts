@@ -33,6 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--v2-validation-csv", required=True)
     parser.add_argument("--output-dir", default="validation_outputs/engineered_pullback_breakout_run")
     parser.add_argument("--fee-bps", type=float, default=1.0)
+    parser.add_argument("--slippage-bps", type=float, default=0.0)
     return parser.parse_args()
 
 
@@ -214,13 +215,20 @@ def simulate_breakout(df: pd.DataFrame, config: StrategyConfig) -> pd.Series:
     return pd.Series(positions, index=df.index)
 
 
-def compute_metrics(df: pd.DataFrame, position: pd.Series, fee_rate: float) -> Dict[str, float]:
+def compute_metrics(
+    df: pd.DataFrame,
+    position: pd.Series,
+    fee_rate: float,
+    slippage_rate: float = 0.0,
+    return_column: str = "next_bar_ret",
+) -> Dict[str, float]:
     work = df.copy()
     work["position"] = position.fillna(0.0)
     turnover = work["position"].diff().abs().fillna(work["position"].abs())
-    gross_ret = work["position"] * work["next_bar_ret"].fillna(0.0)
+    gross_ret = work["position"] * work[return_column].fillna(0.0)
     fee = turnover * fee_rate
-    net_ret = gross_ret - fee
+    slippage = turnover * slippage_rate
+    net_ret = gross_ret - fee - slippage
 
     gross_equity = np.exp(gross_ret.cumsum())
     net_equity = np.exp(net_ret.cumsum())
@@ -244,6 +252,8 @@ def compute_metrics(df: pd.DataFrame, position: pd.Series, fee_rate: float) -> D
         "short_exposure": float((work["position"] < 0).mean()),
         "avg_abs_position": float(work["position"].abs().mean()),
         "turnover_sum": float(turnover.sum()),
+        "fee_cost_sum": float(fee.sum()),
+        "slippage_cost_sum": float(slippage.sum()),
         "gross_total_return": float(gross_equity.iloc[-1] - 1.0),
         "net_total_return": float(net_equity.iloc[-1] - 1.0),
         "gross_sharpe": gross_sharpe,
@@ -382,6 +392,7 @@ def main() -> None:
     args = parse_args()
     output_dir = ensure_output_dir(args.output_dir)
     fee_rate = args.fee_bps / 10000.0
+    slippage_rate = args.slippage_bps / 10000.0
     df = build_base_frame(args.input_csv, args.v2_validation_csv)
 
     rows: List[Dict[str, float]] = []
@@ -393,7 +404,7 @@ def main() -> None:
         else:
             raise ValueError(f"Unknown branch: {config.branch}")
 
-        metrics = compute_metrics(df, position, fee_rate)
+        metrics = compute_metrics(df, position, fee_rate, slippage_rate)
         rows.append(
             {
                 "config": config.label,
@@ -431,6 +442,7 @@ def main() -> None:
 
     summary = {
         "fee_bps": float(args.fee_bps),
+        "slippage_bps": float(args.slippage_bps),
         "best_overall_by_net_sharpe": results.iloc[0][["config", "branch", "net_sharpe"]].to_dict(),
         "best_overall_by_net_total_return": results.sort_values("net_total_return", ascending=False).iloc[0][
             ["config", "branch", "net_total_return"]

@@ -13,8 +13,12 @@ from engineer_pullback_breakout_v2 import StrategyConfig, gate_passed
 from mnts_min_validation import ensure_output_dir
 from mnts_15m_state_layer_v2 import apply_v2_model, fit_v2_model
 from rolling_breakout_v2_full_system_walkforward import (
+    apply_hourly_risk_model,
     attach_state_streaks,
+    fit_hourly_risk_model,
     load_cached_feature_frame,
+    resolve_return_column,
+    simulate_breakout_with_hourly_risk,
     stitch_test_state,
     summarize_stitched_returns,
     valid_training_rows,
@@ -68,6 +72,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cooldowns", nargs="+", type=int, default=[0, 4, 8, 12])
     parser.add_argument("--gate-modes", nargs="+", default=["nonfracture", "cohesion"])
     parser.add_argument("--fee-bps-list", nargs="+", type=float, default=[1.0, 4.0])
+    parser.add_argument("--slippage-bps", type=float, default=0.0)
+    parser.add_argument(
+        "--execution-model",
+        choices=["close_to_close", "close_to_next_open"],
+        default="close_to_close",
+        help="Execution timing. close_to_close is the legacy model; close_to_next_open uses close signals and next-open fills.",
+    )
+    parser.add_argument(
+        "--hard-stop-loss-pct",
+        type=float,
+        default=0.0,
+        help="Per-trade hard stop on full-position PnL, e.g. 0.30 means stop out after a 30% adverse move.",
+    )
+    parser.add_argument("--hourly-risk-layer", choices=["off", "v1"], default="off")
+    parser.add_argument("--hourly-bars", type=int, default=4, help="1h aggregation over 15m bars.")
+    parser.add_argument("--hourly-orange-quantile", type=float, default=0.60)
+    parser.add_argument("--hourly-red-quantile", type=float, default=0.85)
     return parser.parse_args()
 
 
@@ -102,46 +123,82 @@ def prepare_breakout_columns(df: pd.DataFrame, windows: List[int]) -> pd.DataFra
     return out
 
 
-def simulate_breakout_param(df: pd.DataFrame, param: ParamConfig) -> pd.Series:
+def simulate_breakout_param(
+    df: pd.DataFrame,
+    param: ParamConfig,
+    hard_stop_loss_pct: float = 0.0,
+    execution_model: str = "close_to_close",
+) -> pd.Series:
     config = param.to_strategy_config()
     up_col = f"breakout_up_{param.breakout_window}"
     down_col = f"breakout_down_{param.breakout_window}"
+    fill_price_col = "close" if execution_model == "close_to_close" else "next_open_fill_price"
 
     positions = np.zeros(len(df), dtype=float)
     current = 0.0
+    entry_price = np.nan
     bars_since_change = config.min_hold_bars
     cooldown_left = 0
+    hard_stop_hits = 0
 
     for i, row in enumerate(df.itertuples(index=False)):
         if cooldown_left > 0:
             cooldown_left -= 1
 
+        close_price = float(row.close)
+        fill_price = float(getattr(row, fill_price_col)) if np.isfinite(getattr(row, fill_price_col, np.nan)) else np.nan
         long_event = config.allow_long and bool(getattr(row, up_col)) and gate_passed(row, config)
         short_event = config.allow_short and bool(getattr(row, down_col)) and gate_passed(row, config)
         fracture_exit = config.exit_fracture_bars > 0 and int(row.fracture_streak) >= config.exit_fracture_bars
         changed = False
+        hard_stop_exit = False
 
-        if current > 0 and fracture_exit and bars_since_change >= config.min_hold_bars:
+        if hard_stop_loss_pct > 0 and current != 0.0 and np.isfinite(entry_price):
+            if current > 0:
+                trade_return = close_price / max(entry_price, 1e-8) - 1.0
+            else:
+                trade_return = entry_price / max(close_price, 1e-8) - 1.0
+            hard_stop_exit = trade_return <= -hard_stop_loss_pct
+
+        if current > 0 and hard_stop_exit:
             current = 0.0
+            entry_price = np.nan
+            cooldown_left = config.cooldown_bars
+            hard_stop_hits += 1
+            changed = True
+        elif current < 0 and hard_stop_exit:
+            current = 0.0
+            entry_price = np.nan
+            cooldown_left = config.cooldown_bars
+            hard_stop_hits += 1
+            changed = True
+        elif current > 0 and fracture_exit and bars_since_change >= config.min_hold_bars:
+            current = 0.0
+            entry_price = np.nan
             cooldown_left = config.cooldown_bars
             changed = True
         elif current < 0 and fracture_exit and bars_since_change >= config.min_hold_bars:
             current = 0.0
+            entry_price = np.nan
             cooldown_left = config.cooldown_bars
             changed = True
 
         if current > 0 and short_event and bars_since_change >= config.min_hold_bars:
             current = -1.0 if config.allow_short else 0.0
+            entry_price = fill_price if current != 0.0 else np.nan
             changed = True
         elif current < 0 and long_event and bars_since_change >= config.min_hold_bars:
             current = 1.0 if config.allow_long else 0.0
+            entry_price = fill_price if current != 0.0 else np.nan
             changed = True
         elif current == 0.0 and cooldown_left == 0:
             if long_event:
                 current = 1.0
+                entry_price = fill_price
                 changed = True
             elif short_event:
                 current = -1.0
+                entry_price = fill_price
                 changed = True
 
         positions[i] = current
@@ -150,16 +207,25 @@ def simulate_breakout_param(df: pd.DataFrame, param: ParamConfig) -> pd.Series:
         else:
             bars_since_change += 1
 
-    return pd.Series(positions, index=df.index)
+    out = pd.Series(positions, index=df.index)
+    out.attrs["hard_stop_hits"] = hard_stop_hits
+    return out
 
 
-def compute_fee_metrics(df: pd.DataFrame, position: pd.Series, fee_rate: float) -> tuple[Dict[str, float], np.ndarray]:
-    next_bar_ret = df["next_bar_ret"].fillna(0.0)
+def compute_fee_metrics(
+    df: pd.DataFrame,
+    position: pd.Series,
+    fee_rate: float,
+    slippage_rate: float = 0.0,
+    return_column: str = "next_bar_ret",
+) -> tuple[Dict[str, float], np.ndarray]:
+    next_bar_ret = df[return_column].fillna(0.0)
     work_pos = position.fillna(0.0)
     turnover = work_pos.diff().abs().fillna(work_pos.abs())
     gross_ret = work_pos * next_bar_ret
     fee = turnover * fee_rate
-    net_ret = gross_ret - fee
+    slippage = turnover * slippage_rate
+    net_ret = gross_ret - fee - slippage
 
     gross_equity = np.exp(gross_ret.cumsum())
     net_equity = np.exp(net_ret.cumsum())
@@ -183,6 +249,8 @@ def compute_fee_metrics(df: pd.DataFrame, position: pd.Series, fee_rate: float) 
         "short_exposure": float((work_pos < 0).mean()),
         "avg_abs_position": float(work_pos.abs().mean()),
         "turnover_sum": float(turnover.sum()),
+        "fee_cost_sum": float(fee.sum()),
+        "slippage_cost_sum": float(slippage.sum()),
         "gross_total_return": float(gross_equity.iloc[-1] - 1.0),
         "net_total_return": float(net_equity.iloc[-1] - 1.0),
         "gross_sharpe": gross_sharpe,
@@ -200,8 +268,16 @@ def evaluate_grid(
     train_bars: int,
     test_bars: int,
     fee_bps_list: List[float],
+    slippage_rate: float,
+    hard_stop_loss_pct: float,
+    execution_model: str,
+    hourly_risk_layer: str,
+    hourly_bars: int,
+    hourly_orange_quantile: float,
+    hourly_red_quantile: float,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     fee_rates = {fee_bps: fee_bps / 10000.0 for fee_bps in fee_bps_list}
+    return_column = resolve_return_column(execution_model)
     net_return_chunks: Dict[float, Dict[str, List[np.ndarray]]] = {
         fee_bps: {config.label: [] for config in configs} for fee_bps in fee_bps_list
     }
@@ -225,11 +301,42 @@ def evaluate_grid(
         train_scored = attach_state_streaks(apply_v2_model(raw_train, v2_model))
         test_scored = apply_v2_model(raw_test, v2_model)
         test_scored = stitch_test_state(train_scored, test_scored)
+        hourly_model: Dict[str, object] | None = None
+        if hourly_risk_layer == "v1":
+            hourly_model = fit_hourly_risk_model(
+                train_scored=train_scored,
+                hourly_bars=hourly_bars,
+                orange_quantile=hourly_orange_quantile,
+                red_quantile=hourly_red_quantile,
+            )
+            train_scored = apply_hourly_risk_model(train_scored, hourly_model)
+            combined_for_hourly = pd.concat(
+                [train_scored.tail(max(8, hourly_bars * 2)), test_scored],
+                ignore_index=True,
+            )
+            combined_for_hourly = apply_hourly_risk_model(combined_for_hourly, hourly_model)
+            test_scored = combined_for_hourly.iloc[len(combined_for_hourly) - len(test_scored) :].reset_index(drop=True)
 
         for config in configs:
-            test_position = simulate_breakout_param(test_scored, config)
+            test_position = (
+                simulate_breakout_with_hourly_risk(test_scored, config.to_strategy_config())
+                if hourly_model is not None
+                else simulate_breakout_param(
+                    test_scored,
+                    config,
+                    hard_stop_loss_pct=hard_stop_loss_pct,
+                    execution_model=execution_model,
+                )
+            )
+            hard_stop_hits = int(test_position.attrs.get("hard_stop_hits", 0))
             for fee_bps, fee_rate in fee_rates.items():
-                metrics, net_ret = compute_fee_metrics(test_scored, test_position, fee_rate)
+                metrics, net_ret = compute_fee_metrics(
+                    test_scored,
+                    test_position,
+                    fee_rate,
+                    slippage_rate,
+                    return_column=return_column,
+                )
                 net_return_chunks[fee_bps][config.label].append(net_ret)
                 window_rows.append(
                     {
@@ -249,6 +356,21 @@ def evaluate_grid(
                         "train_v2_score_q30": float(v2_model["score_q30"]),
                         "train_v2_score_q70": float(v2_model["score_q70"]),
                         "train_v2_high_vol_threshold": float(v2_model["high_vol_threshold"]),
+                        "hard_stop_loss_pct": float(hard_stop_loss_pct),
+                        "hard_stop_hits": hard_stop_hits,
+                        "execution_model": execution_model,
+                        "hourly_risk_layer": hourly_risk_layer,
+                        "train_hourly_orange_threshold": float(hourly_model["orange_threshold"]) if hourly_model else np.nan,
+                        "train_hourly_red_threshold": float(hourly_model["red_threshold"]) if hourly_model else np.nan,
+                        "test_hourly_green_share": float((test_scored["hourly_state"] == "green").mean())
+                        if "hourly_state" in test_scored
+                        else np.nan,
+                        "test_hourly_orange_share": float((test_scored["hourly_state"] == "orange").mean())
+                        if "hourly_state" in test_scored
+                        else np.nan,
+                        "test_hourly_red_share": float((test_scored["hourly_state"] == "red").mean())
+                        if "hourly_state" in test_scored
+                        else np.nan,
                         **metrics,
                     }
                 )
@@ -283,6 +405,8 @@ def evaluate_grid(
                     "mean_window_net_total_return": float(config_windows["net_total_return"].mean()),
                     "mean_window_net_sharpe": float(config_windows["net_sharpe"].mean()),
                     "mean_window_turnover_sum": float(config_windows["turnover_sum"].mean()),
+                    "mean_window_hard_stop_hits": float(config_windows["hard_stop_hits"].mean()),
+                    "total_hard_stop_hits": int(config_windows["hard_stop_hits"].sum()),
                     **{f"stitched_{k}": v for k, v in stitched_summary.items()},
                 }
             )
@@ -322,6 +446,7 @@ def main() -> None:
     configs = build_param_grid(args)
     df, validation_start_idx = load_cached_feature_frame(args.discovery_v2_csv, args.validation_v2_csv)
     df = prepare_breakout_columns(df, args.breakout_windows)
+    slippage_rate = args.slippage_bps / 10000.0
 
     summary_df, window_df = evaluate_grid(
         df=df,
@@ -330,6 +455,13 @@ def main() -> None:
         train_bars=args.train_bars,
         test_bars=args.test_bars,
         fee_bps_list=[float(x) for x in args.fee_bps_list],
+        slippage_rate=slippage_rate,
+        hard_stop_loss_pct=float(args.hard_stop_loss_pct),
+        execution_model=args.execution_model,
+        hourly_risk_layer=args.hourly_risk_layer,
+        hourly_bars=args.hourly_bars,
+        hourly_orange_quantile=args.hourly_orange_quantile,
+        hourly_red_quantile=args.hourly_red_quantile,
     )
     summary_df = summary_df.sort_values(
         ["fee_bps", "stitched_net_sharpe", "stitched_net_total_return"],
@@ -351,6 +483,13 @@ def main() -> None:
     anchor_region.to_csv(output_dir / "parameter_stability_anchor_region.csv", index=False)
 
     json_summary = build_json_summary(summary_df)
+    json_summary["slippage_bps"] = float(args.slippage_bps)
+    json_summary["hard_stop_loss_pct"] = float(args.hard_stop_loss_pct)
+    json_summary["execution_model"] = args.execution_model
+    json_summary["hourly_risk_layer"] = args.hourly_risk_layer
+    json_summary["hourly_bars"] = int(args.hourly_bars)
+    json_summary["hourly_orange_quantile"] = float(args.hourly_orange_quantile)
+    json_summary["hourly_red_quantile"] = float(args.hourly_red_quantile)
     (output_dir / "parameter_stability_summary.json").write_text(
         json.dumps(json_summary, ensure_ascii=False, indent=2),
         encoding="utf-8",
