@@ -28,6 +28,8 @@ PAPER_RUNTIME_DIR = ROOT / "runtime" / "paper_trading"
 REFRESH_MS = 10_000
 LIVE_SIGNAL_REFRESH_SECONDS = 60
 LIVE_KLINE_LIMIT = 320
+PAPER_RUNNER_MIN_SLEEP_SECONDS = 5.0
+PAPER_RUNNER_MAX_SLEEP_SECONDS = 30.0
 KRONOS_REPO_DIR = ROOT / "external" / "Kronos"
 KRONOS_TOKENIZER_NAME = "NeoQuasar/Kronos-Tokenizer-base"
 KRONOS_CHUNK_SIZE = 256
@@ -36,6 +38,8 @@ DEFAULT_SLIPPAGE_BPS = 1.0
 BAR_INTERVAL = pd.Timedelta(minutes=15)
 TRAIN_BARS = 11520
 TEST_BARS = 2880
+HISTORY_BOOTSTRAP_LOOKBACK_DAYS = 365 * 4 + 7
+HISTORICAL_KLINE_BATCH_LIMIT = 1000
 _TOKENIZER_ADAPTER: Optional[KronosTokenizerAdapter] = None
 _LIVE_SIGNAL_CACHE: Dict[str, Any] = {
     "expires_at": 0.0,
@@ -45,6 +49,9 @@ _LIVE_SIGNAL_CACHE: Dict[str, Any] = {
     "last_error": None,
 }
 _LOCAL_HISTORY_CACHE: Dict[str, Any] = {}
+_API_STATE_CACHE: Dict[str, Any] = {"state": None, "updated_at": None, "last_error": None}
+_API_STATE_CACHE_LOCK = threading.Lock()
+_PAPER_RUNNER_THREAD: Optional[threading.Thread] = None
 
 SYMBOL_CONFIGS: List[Dict[str, Any]] = [
     {
@@ -62,6 +69,22 @@ SYMBOL_CONFIGS: List[Dict[str, Any]] = [
         "input_csv": ROOT / "data" / "ethusdt_15m_4y.csv",
         "summary_path": ROOT / "validation_outputs" / "eth_anchor_trade_outcomes_nextopen_1000u_2x" / "trade_outcomes_summary.json",
         "trades_path": ROOT / "validation_outputs" / "eth_anchor_trade_outcomes_nextopen_1000u_2x" / "trade_outcomes_fee4.csv",
+    },
+    {
+        "symbol": "SOLUSDT",
+        "anchor": "bw40_cohesion_hold8_cool4",
+        "display_name": "SOL",
+        "input_csv": ROOT / "data" / "solusdt_15m_4y.csv",
+        "summary_path": ROOT / "validation_outputs" / "sol_anchor_trade_outcomes_nextopen_1000u_2x" / "trade_outcomes_summary.json",
+        "trades_path": ROOT / "validation_outputs" / "sol_anchor_trade_outcomes_nextopen_1000u_2x" / "trade_outcomes_fee4.csv",
+    },
+    {
+        "symbol": "XRPUSDT",
+        "anchor": "bw64_nonfracture_hold16_cool4",
+        "display_name": "XRP",
+        "input_csv": ROOT / "data" / "xrpusdt_15m_4y.csv",
+        "summary_path": ROOT / "validation_outputs" / "xrp_anchor_trade_outcomes_nextopen_1000u_2x" / "trade_outcomes_summary.json",
+        "trades_path": ROOT / "validation_outputs" / "xrp_anchor_trade_outcomes_nextopen_1000u_2x" / "trade_outcomes_fee4.csv",
     },
 ]
 
@@ -220,7 +243,7 @@ TEMPLATE = """
     <div class="topbar">
       <div>
         <h1>MNTS 纸上实盘看板</h1>
-        <div class="muted">BTC + ETH | 收盘发信号，下根开盘成交 | fee4 + slippage1 | 每币 1000U | 2 倍杠杆</div>
+        <div class="muted">BTC + ETH + SOL + XRP | 收盘发信号，下根开盘成交 | fee4 + slippage1 | 每币 1000U | 2 倍杠杆</div>
       </div>
       <div class="panel soft">
         <div class="metric-label">自动刷新</div>
@@ -696,6 +719,48 @@ def append_records(path: Path, rows: List[Dict[str, Any]]) -> None:
         frame.to_csv(path, index=False)
 
 
+def ensure_local_history_file(config: Dict[str, Any]) -> Path:
+    path = Path(config["input_csv"]).resolve()
+    if path.exists():
+        return path
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    end_ts = pd.Timestamp.now(tz="UTC")
+    start_ts = end_ts - pd.Timedelta(days=HISTORY_BOOTSTRAP_LOOKBACK_DAYS)
+    next_start_ms = int(start_ts.timestamp() * 1000)
+    end_ms = int(end_ts.timestamp() * 1000)
+    chunks: List[pd.DataFrame] = []
+
+    while next_start_ms < end_ms:
+        batch = fetch_klines(
+            symbol=config["symbol"],
+            limit=HISTORICAL_KLINE_BATCH_LIMIT,
+            start_time_ms=next_start_ms,
+            end_time_ms=end_ms,
+        )
+        if batch.empty:
+            break
+
+        closed_batch = batch[batch["close_timestamp"] < end_ts].copy().reset_index(drop=True)
+        if closed_batch.empty:
+            break
+        chunks.append(closed_batch[["timestamp", "open", "high", "low", "close", "volume", "amount"]].copy())
+
+        last_open_timestamp = pd.Timestamp(closed_batch.iloc[-1]["timestamp"])
+        next_start_ms = int((last_open_timestamp + BAR_INTERVAL).timestamp() * 1000)
+        if len(batch) < HISTORICAL_KLINE_BATCH_LIMIT:
+            break
+
+    if not chunks:
+        raise FileNotFoundError(f"Unable to bootstrap local history for {config['symbol']} -> {path}")
+
+    history = pd.concat(chunks, ignore_index=True)
+    history = history.sort_values("timestamp").drop_duplicates(subset=["timestamp"], keep="last").reset_index(drop=True)
+    history.to_csv(path, index=False)
+    _LOCAL_HISTORY_CACHE.pop(str(path), None)
+    return path
+
+
 def load_local_history(path: Path) -> pd.DataFrame:
     resolved = path.resolve()
     stat = resolved.stat()
@@ -711,7 +776,7 @@ def load_local_history(path: Path) -> pd.DataFrame:
 
 
 def load_symbol_history(config: Dict[str, Any]) -> pd.DataFrame:
-    base = load_local_history(Path(config["input_csv"]))
+    base = load_local_history(ensure_local_history_file(config))
     recent_remote = fetch_recent_klines(config["symbol"], limit=1000)
     recent_remote = recent_remote[recent_remote["close_timestamp"] < pd.Timestamp.now(tz="UTC")].copy()
     if recent_remote.empty:
@@ -752,20 +817,24 @@ def attach_state_streak_columns(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def describe_current_model_cycle(history: pd.DataFrame) -> Dict[str, Any]:
+def describe_model_cycle(history: pd.DataFrame, cycle_index: int, active_cycle_index: Optional[int] = None) -> Dict[str, Any]:
     if len(history) <= TRAIN_BARS:
         raise ValueError(f"Not enough bars for walk-forward cycle: {len(history)}")
+    if active_cycle_index is None:
+        latest_idx = len(history) - 1
+        active_cycle_index = max(0, int((latest_idx - TRAIN_BARS) // TEST_BARS))
 
-    latest_idx = len(history) - 1
-    cycle_index = max(0, int((latest_idx - TRAIN_BARS) // TEST_BARS))
     train_start_idx = cycle_index * TEST_BARS
     train_end_idx = train_start_idx + TRAIN_BARS
     run_start_idx = train_end_idx
     scheduled_run_end_exclusive = run_start_idx + TEST_BARS
-    available_run_end_exclusive = len(history)
+    if cycle_index < active_cycle_index:
+        available_run_end_exclusive = min(len(history), scheduled_run_end_exclusive)
+    else:
+        available_run_end_exclusive = len(history)
 
     if run_start_idx >= len(history):
-        raise ValueError(f"No active run window available for latest index: {latest_idx}")
+        raise ValueError(f"No run window available for cycle index: {cycle_index}")
 
     train_start_ts = pd.Timestamp(history.iloc[train_start_idx]["timestamp"])
     train_end_ts = pd.Timestamp(history.iloc[train_end_idx - 1]["timestamp"])
@@ -789,6 +858,12 @@ def describe_current_model_cycle(history: pd.DataFrame) -> Dict[str, Any]:
         "model_run_window_label": summarize_cycle_window(run_start_ts, scheduled_run_end_ts),
         "run_progress_label": f"{available_run_end_exclusive - run_start_idx} / {TEST_BARS} 根",
     }
+
+
+def describe_current_model_cycle(history: pd.DataFrame) -> Dict[str, Any]:
+    latest_idx = len(history) - 1
+    cycle_index = max(0, int((latest_idx - TRAIN_BARS) // TEST_BARS))
+    return describe_model_cycle(history, cycle_index=cycle_index, active_cycle_index=cycle_index)
 
 
 def extract_cycle_history_slice(history: pd.DataFrame, descriptor: Dict[str, Any]) -> pd.DataFrame:
@@ -851,6 +926,31 @@ def save_model_cycle_state(paths: Dict[str, Path], cycle_state: Dict[str, Any]) 
     paths["model"].write_text(json.dumps(cycle_state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def fit_cycle_state(
+    config: Dict[str, Any],
+    descriptor: Dict[str, Any],
+    train_prepared: pd.DataFrame,
+) -> Dict[str, Any]:
+    train_for_v2 = valid_training_rows(train_prepared)
+    min_required_rows = max(2000, TRAIN_BARS // 4)
+    if len(train_for_v2) < min_required_rows:
+        raise ValueError(
+            f"Not enough valid training rows for {config['symbol']}: {len(train_for_v2)} < {min_required_rows}"
+        )
+
+    model = fit_v2_model(train_for_v2)
+    return {
+        "symbol": config["symbol"],
+        "anchor": config["anchor"],
+        "cycle_mode": "180d_train_45d_frozen",
+        "feature_fit_scope": "train_window_only",
+        "fitted_at": pd.Timestamp.now(tz="UTC").isoformat(),
+        "train_rows_for_v2": int(len(train_for_v2)),
+        "model": model,
+        **descriptor,
+    }
+
+
 def load_or_fit_model_cycle(
     config: Dict[str, Any],
     paths: Dict[str, Path],
@@ -863,24 +963,7 @@ def load_or_fit_model_cycle(
         out.update(descriptor)
         return out
 
-    train_for_v2 = valid_training_rows(train_prepared)
-    min_required_rows = max(2000, TRAIN_BARS // 4)
-    if len(train_for_v2) < min_required_rows:
-        raise ValueError(
-            f"Not enough valid training rows for {config['symbol']}: {len(train_for_v2)} < {min_required_rows}"
-        )
-
-    model = fit_v2_model(train_for_v2)
-    cycle_state = {
-        "symbol": config["symbol"],
-        "anchor": config["anchor"],
-        "cycle_mode": "180d_train_45d_frozen",
-        "feature_fit_scope": "train_window_only",
-        "fitted_at": pd.Timestamp.now(tz="UTC").isoformat(),
-        "train_rows_for_v2": int(len(train_for_v2)),
-        "model": model,
-        **descriptor,
-    }
+    cycle_state = fit_cycle_state(config, descriptor, train_prepared)
     save_model_cycle_state(paths, cycle_state)
     return cycle_state
 
@@ -1135,6 +1218,9 @@ def update_paper_account(
         save_account_state(paths, state)
 
     last_processed = state.get("last_processed_signal_timestamp")
+    if last_processed and ledger_rows and str(last_processed) < str(ledger_rows[0]["signal_timestamp"]):
+        history = load_symbol_history(config)
+        ledger_rows = replay_pending_ledger_rows(config, history, str(last_processed))
     pending_rows = [row for row in ledger_rows if not last_processed or str(row["signal_timestamp"]) > str(last_processed)]
     appended = apply_realized_signal_rows(
         state,
@@ -1179,8 +1265,13 @@ def get_tokenizer_adapter() -> KronosTokenizerAdapter:
     return _TOKENIZER_ADAPTER
 
 
-def fetch_recent_klines(symbol: str, limit: int = LIVE_KLINE_LIMIT) -> pd.DataFrame:
-    query = urllib.parse.urlencode({"symbol": symbol, "interval": "15m", "limit": limit})
+def fetch_klines(symbol: str, limit: int, start_time_ms: Optional[int] = None, end_time_ms: Optional[int] = None) -> pd.DataFrame:
+    query_payload: Dict[str, Any] = {"symbol": symbol, "interval": "15m", "limit": limit}
+    if start_time_ms is not None:
+        query_payload["startTime"] = int(start_time_ms)
+    if end_time_ms is not None:
+        query_payload["endTime"] = int(end_time_ms)
+    query = urllib.parse.urlencode(query_payload)
     url = f"{BINANCE_KLINES_URL}?{query}"
     with urllib.request.urlopen(url, timeout=15) as response:
         payload = response.read().decode("utf-8")
@@ -1208,6 +1299,10 @@ def fetch_recent_klines(symbol: str, limit: int = LIVE_KLINE_LIMIT) -> pd.DataFr
     df["close_timestamp"] = pd.to_datetime(df["close_time"], unit="ms", utc=True)
     df["amount"] = df["quote_asset_volume"].fillna(0.0)
     return df.sort_values("timestamp").reset_index(drop=True)
+
+
+def fetch_recent_klines(symbol: str, limit: int = LIVE_KLINE_LIMIT) -> pd.DataFrame:
+    return fetch_klines(symbol=symbol, limit=limit)
 
 
 def position_label(value: float) -> str:
@@ -1246,6 +1341,136 @@ def latest_action_label(previous: float, current: float) -> str:
     if previous < 0 and current > 0:
         return "空头反手为多头"
     return "状态更新"
+
+
+def build_live_ledger_rows(
+    config: Dict[str, Any],
+    scored: pd.DataFrame,
+    positions: pd.Series,
+    up_col: str,
+    down_col: str,
+) -> List[Dict[str, Any]]:
+    ledger_rows: List[Dict[str, Any]] = []
+    realizable_end = max(len(scored) - 1, 0)
+    for i in range(realizable_end):
+        signal_timestamp = pd.Timestamp(scored.iloc[i]["timestamp"]).isoformat()
+        fill_timestamp_value = scored.iloc[i]["next_fill_timestamp"]
+        equity_timestamp_value = scored.iloc[i]["next_equity_timestamp"]
+        if pd.isna(scored.iloc[i]["next_open_ret"]) or pd.isna(scored.iloc[i]["next_open_fill_price"]):
+            continue
+        if pd.isna(fill_timestamp_value) or pd.isna(equity_timestamp_value):
+            continue
+        prev_bar_position = float(positions.iloc[i - 1]) if i > 0 else 0.0
+        ledger_rows.append(
+            {
+                "symbol": config["symbol"],
+                "signal_timestamp": signal_timestamp,
+                "fill_timestamp": pd.Timestamp(fill_timestamp_value).isoformat(),
+                "equity_timestamp": pd.Timestamp(equity_timestamp_value).isoformat(),
+                "position": float(positions.iloc[i]),
+                "previous_position": prev_bar_position,
+                "next_open_ret": float(scored.iloc[i]["next_open_ret"]),
+                "fill_price": float(scored.iloc[i]["next_open_fill_price"]),
+                "state": str(scored.iloc[i]["state"]),
+                "breakout_label": breakout_label(bool(scored.iloc[i][up_col]), bool(scored.iloc[i][down_col])),
+            }
+        )
+    return ledger_rows
+
+
+def cycle_index_for_signal_timestamp(history: pd.DataFrame, signal_timestamp: Any) -> int:
+    if signal_timestamp is None:
+        return 0
+    ts = pd.Timestamp(signal_timestamp)
+    if pd.isna(ts):
+        return 0
+    if ts.tzinfo is None:
+        ts = ts.tz_localize("UTC")
+    timestamps = pd.to_datetime(history["timestamp"], utc=True, errors="coerce")
+    signal_idx = int(timestamps.searchsorted(ts, side="left"))
+    if signal_idx < TRAIN_BARS:
+        return 0
+    return max(0, int((signal_idx - TRAIN_BARS) // TEST_BARS))
+
+
+def build_cycle_snapshot_scored_frame(
+    config: Dict[str, Any],
+    history: pd.DataFrame,
+    descriptor: Dict[str, Any],
+) -> Dict[str, Any]:
+    cycle_history = extract_cycle_history_slice(history, descriptor)
+    adapter = get_tokenizer_adapter()
+    token_input = cycle_history[["timestamp", "open", "high", "low", "close", "volume", "amount"]].copy()
+    artifact = adapter.fit_transform(token_input)
+    feature_splits = prepare_strict_cycle_feature_splits(
+        artifact.frame.copy().reset_index(drop=True),
+        artifact.token_ids,
+        artifact.embeddings,
+    )
+    cycle_state = fit_cycle_state(config, descriptor, feature_splits["train_prepared"])
+    scored = compute_cycle_scored_frame(feature_splits["train_prepared"], feature_splits["run_prepared"], cycle_state)
+
+    cycle_run_history = cycle_history.iloc[TRAIN_BARS:].copy().reset_index(drop=True)
+    future_open = cycle_run_history["open"].shift(-1).reset_index(drop=True)
+    next_future_open = cycle_run_history["open"].shift(-2).reset_index(drop=True)
+    next_fill_timestamp = cycle_run_history["timestamp"].shift(-1).reset_index(drop=True)
+    next_equity_timestamp = cycle_run_history["timestamp"].shift(-2).reset_index(drop=True)
+    scored["next_open_fill_price"] = future_open
+    scored["next_open_ret"] = (next_future_open / future_open).map(
+        lambda value: math.log(value) if pd.notna(value) and value > 0 else float("nan")
+    )
+    scored["next_fill_timestamp"] = next_fill_timestamp
+    scored["next_equity_timestamp"] = next_equity_timestamp
+
+    anchor_param = parse_anchor_param(config["anchor"])
+    scored = prepare_breakout_columns(scored, [anchor_param.breakout_window])
+    positions = simulate_breakout_param(
+        scored,
+        anchor_param,
+        hard_stop_loss_pct=0.0,
+        execution_model="close_to_next_open",
+    )
+    up_col = f"breakout_up_{anchor_param.breakout_window}"
+    down_col = f"breakout_down_{anchor_param.breakout_window}"
+    ledger_rows = build_live_ledger_rows(config, scored, positions, up_col, down_col)
+    return {
+        "cycle_history": cycle_history,
+        "feature_splits": feature_splits,
+        "cycle_state": cycle_state,
+        "scored": scored,
+        "positions": positions,
+        "up_col": up_col,
+        "down_col": down_col,
+        "ledger_rows": ledger_rows,
+    }
+
+
+def replay_pending_ledger_rows(
+    config: Dict[str, Any],
+    history: pd.DataFrame,
+    last_processed_signal_timestamp: Optional[str],
+) -> List[Dict[str, Any]]:
+    if last_processed_signal_timestamp is None:
+        return []
+
+    active_descriptor = describe_current_model_cycle(history)
+    active_cycle_index = int(active_descriptor["cycle_index"])
+    start_cycle_index = min(
+        active_cycle_index,
+        cycle_index_for_signal_timestamp(history, last_processed_signal_timestamp),
+    )
+    replay_rows: List[Dict[str, Any]] = []
+
+    for cycle_index in range(start_cycle_index, active_cycle_index + 1):
+        cycle_descriptor = describe_model_cycle(history, cycle_index=cycle_index, active_cycle_index=active_cycle_index)
+        cycle_snapshot = build_cycle_snapshot_scored_frame(config, history, cycle_descriptor)
+        replay_rows.extend(cycle_snapshot["ledger_rows"])
+
+    filtered_rows = [
+        row for row in replay_rows if row.get("signal_timestamp") and row["signal_timestamp"] > str(last_processed_signal_timestamp)
+    ]
+    deduped = {row["signal_timestamp"]: row for row in filtered_rows}
+    return [deduped[key] for key in sorted(deduped.keys())]
 
 
 def next_live_refresh_epoch(snapshot: Dict[str, Any], fallback_now: float) -> float:
@@ -1420,31 +1645,7 @@ def compute_live_signal_snapshot(config: Dict[str, Any]) -> Dict[str, Any]:
     if len(bars) > len(closed_live):
         current_bar_open_timestamp = pd.Timestamp(bars.iloc[len(closed_live)]["timestamp"]).isoformat()
 
-    ledger_rows: List[Dict[str, Any]] = []
-    realizable_end = max(len(scored) - 1, 0)
-    for i in range(realizable_end):
-        signal_timestamp = pd.Timestamp(scored.iloc[i]["timestamp"]).isoformat()
-        fill_timestamp_value = scored.iloc[i]["next_fill_timestamp"]
-        equity_timestamp_value = scored.iloc[i]["next_equity_timestamp"]
-        if pd.isna(scored.iloc[i]["next_open_ret"]) or pd.isna(scored.iloc[i]["next_open_fill_price"]):
-            continue
-        if pd.isna(fill_timestamp_value) or pd.isna(equity_timestamp_value):
-            continue
-        prev_bar_position = float(positions.iloc[i - 1]) if i > 0 else 0.0
-        ledger_rows.append(
-            {
-                "symbol": config["symbol"],
-                "signal_timestamp": signal_timestamp,
-                "fill_timestamp": pd.Timestamp(fill_timestamp_value).isoformat(),
-                "equity_timestamp": pd.Timestamp(equity_timestamp_value).isoformat(),
-                "position": float(positions.iloc[i]),
-                "previous_position": prev_bar_position,
-                "next_open_ret": float(scored.iloc[i]["next_open_ret"]),
-                "fill_price": float(scored.iloc[i]["next_open_fill_price"]),
-                "state": str(scored.iloc[i]["state"]),
-                "breakout_label": breakout_label(bool(scored.iloc[i][up_col]), bool(scored.iloc[i][down_col])),
-            }
-        )
+    ledger_rows = build_live_ledger_rows(config, scored, positions, up_col, down_col)
 
     return {
         "status": "ok",
@@ -1480,8 +1681,17 @@ def compute_live_signal_snapshot(config: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def get_live_signal_snapshots() -> Dict[str, Dict[str, Any]]:
+def get_live_signal_snapshots(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
     now_ts = time.time()
+    if force_refresh:
+        fresh = compute_all_live_signal_snapshots()
+        _LIVE_SIGNAL_CACHE["expires_at"] = fresh["expires_at"]
+        _LIVE_SIGNAL_CACHE["updated_at"] = fresh["updated_at"]
+        _LIVE_SIGNAL_CACHE["snapshots"] = fresh["snapshots"]
+        _LIVE_SIGNAL_CACHE["last_error"] = fresh["last_error"]
+        _LIVE_SIGNAL_CACHE["refreshing"] = False
+        return fresh["snapshots"]
+
     if _LIVE_SIGNAL_CACHE["snapshots"] and now_ts < float(_LIVE_SIGNAL_CACHE["expires_at"]):
         return _LIVE_SIGNAL_CACHE["snapshots"]
 
@@ -1542,13 +1752,14 @@ def fetch_market_snapshot(symbol: str) -> Dict[str, Any]:
         }
 
 
-def load_symbol_state(config: Dict[str, Any]) -> Dict[str, Any]:
+def load_symbol_state(config: Dict[str, Any], live_snapshots: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
     summary = read_json(config["summary_path"])
     fee_block = summary.get("4.0", {})
     trades = read_recent_trades(config["trades_path"], config["symbol"], limit=12)
     last_trade = trades[-1] if trades else {}
     market = fetch_market_snapshot(config["symbol"])
-    live_snapshots = get_live_signal_snapshots()
+    if live_snapshots is None:
+        live_snapshots = get_live_signal_snapshots()
     raw_live = live_snapshots.get(config["symbol"], {})
     live = merge_live_market_state(
         raw_live,
@@ -1586,8 +1797,9 @@ def load_symbol_state(config: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def build_api_state() -> Dict[str, Any]:
-    symbols = [load_symbol_state(config) for config in SYMBOL_CONFIGS]
+def compute_api_state(force_live_refresh: bool = False) -> Dict[str, Any]:
+    live_snapshots = get_live_signal_snapshots(force_refresh=force_live_refresh)
+    symbols = [load_symbol_state(config, live_snapshots=live_snapshots) for config in SYMBOL_CONFIGS]
     recent_trades: List[Dict[str, Any]] = []
     recent_signals: List[Dict[str, Any]] = []
     initial_capital = 0.0
@@ -1641,6 +1853,62 @@ def build_api_state() -> Dict[str, Any]:
     }
 
 
+def refresh_api_state_cache(force_live_refresh: bool = False) -> Dict[str, Any]:
+    state = compute_api_state(force_live_refresh=force_live_refresh)
+    with _API_STATE_CACHE_LOCK:
+        _API_STATE_CACHE["state"] = state
+        _API_STATE_CACHE["updated_at"] = state.get("updated_at")
+        _API_STATE_CACHE["last_error"] = None
+    return state
+
+
+def get_cached_api_state() -> Optional[Dict[str, Any]]:
+    with _API_STATE_CACHE_LOCK:
+        state = _API_STATE_CACHE.get("state")
+        if state is None:
+            return None
+        return json.loads(json.dumps(state))
+
+
+def should_force_live_refresh() -> bool:
+    if not _LIVE_SIGNAL_CACHE["snapshots"]:
+        return True
+    return time.time() >= float(_LIVE_SIGNAL_CACHE.get("expires_at", 0.0) or 0.0)
+
+
+def next_paper_runner_sleep_seconds() -> float:
+    if not _LIVE_SIGNAL_CACHE["snapshots"]:
+        return PAPER_RUNNER_MIN_SLEEP_SECONDS
+    seconds_until_live_refresh = float(_LIVE_SIGNAL_CACHE.get("expires_at", 0.0) or 0.0) - time.time()
+    bounded = min(max(seconds_until_live_refresh, PAPER_RUNNER_MIN_SLEEP_SECONDS), PAPER_RUNNER_MAX_SLEEP_SECONDS)
+    return max(bounded, PAPER_RUNNER_MIN_SLEEP_SECONDS)
+
+
+def paper_runner_loop() -> None:
+    while True:
+        try:
+            refresh_api_state_cache(force_live_refresh=should_force_live_refresh())
+        except Exception as exc:  # pragma: no cover - daemon must stay alive
+            with _API_STATE_CACHE_LOCK:
+                _API_STATE_CACHE["last_error"] = str(exc)
+        time.sleep(next_paper_runner_sleep_seconds())
+
+
+def start_background_paper_runner() -> None:
+    global _PAPER_RUNNER_THREAD
+    if _PAPER_RUNNER_THREAD is not None and _PAPER_RUNNER_THREAD.is_alive():
+        return
+    _PAPER_RUNNER_THREAD = threading.Thread(target=paper_runner_loop, name="paper-runner", daemon=True)
+    _PAPER_RUNNER_THREAD.start()
+
+
+def build_api_state() -> Dict[str, Any]:
+    cached = get_cached_api_state()
+    if cached is not None:
+        return cached
+    return refresh_api_state_cache(force_live_refresh=True)
+
+
 @app.get("/")
 def index() -> str:
     return render_template_string(TEMPLATE, refresh_ms=REFRESH_MS)
@@ -1652,9 +1920,9 @@ def api_state():
 
 
 if __name__ == "__main__":
-    # Warm the heavy live snapshot cache before serving requests so the first page load is responsive.
     try:
-        get_live_signal_snapshots()
+        refresh_api_state_cache(force_live_refresh=True)
     except Exception:
         pass
+    start_background_paper_runner()
     app.run(host="0.0.0.0", port=8787, debug=False)
