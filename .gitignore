@@ -29,6 +29,13 @@ Thumbs.db
 
 # Local runtime artifacts
 validation_outputs/**/runtime_heartbeat.txt
+runtime/
+
+# Local market data snapshots
+data/*.csv
+
+# Validation / experiment outputs generated locally
+validation_outputs/
 
 # Embedded git metadata must not be committed into the parent repo
 external/Kronos/.git
